@@ -16,7 +16,8 @@ import           Text.Read
 import qualified Control.Concurrent.STM        as STM
 import           Control.Monad
 import           Control.Monad.Extra
-import           Control.Monad.Loops           (forkMapM, iterateUntil, whileM_)
+import           Control.Monad.Loops           (forkMapM, forkMapM_,
+                                                iterateUntil, whileM_)
 import qualified Data.Map                      as M
 import           Data.Maybe
 import           Data.Ord
@@ -32,10 +33,23 @@ import           Data.List
 import           Data.Word
 import           DHT.Store
 
+
+a:: Int
+a = 3
+k:: Int
+k = 20
+
+debug = False
+
+
 type IPv4 = HostAddress
 type Port = Word16
 
 type ID = Integer
+
+type SessionID = Integer
+data SessionMode = ASEARCH | KSEARCH
+  deriving Eq
 
 data Peer = Peer { _id::ID, _ip::IPv4, _port::Port }
                   deriving (Eq,Show,Read)
@@ -63,27 +77,19 @@ data Session = Session   { _sessionid  :: Integer
 data Instance i v = Instance { _self      :: Peer
                              , _kbuckets  :: STM.TMVar (M.Map Integer (STM.TMVar [Peer]))
                              , _sessions  :: STM.TMVar (M.Map Integer Session)
-                             , _dht       :: DHT i v
+                             , _ht        :: DHT i v
                              , _alpha     :: Int
                              , _k         :: Int
                              ,_ioLock     :: STM.TMVar ()
                              }
 
-a:: Int
-a = 3
-k:: Int
-k = 20
 
-debug = False
 
-ioLock = STM.newTMVarIO ()
 
-type SessionID = Integer
-data SessionMode = ASEARCH | KSEARCH
-  deriving Eq
 
 newSession :: Instance i v -> IO SessionID
 newSession inst = do
+
   sl <- STM.newTMVarIO []
   sl' <- STM.newTMVarIO []
   v <- STM.newTMVarIO []
@@ -91,8 +97,6 @@ newSession inst = do
   c <- STM.newTMVarIO []
   c' <- STM.newTMVarIO []
   m <- STM.newTMVarIO ASEARCH
-
-
 
   ss <- STM.atomically $ STM.takeTMVar $ _sessions inst
   r <- iterateUntil (`M.notMember` ss) randomIO
@@ -104,7 +108,7 @@ newSession inst = do
 
 
 
-createInstance :: (Read i , Show i) => Peer -> IO (Instance i v)
+--createInstance :: (Read i , Show i) => Peer -> IO (Instance i v)
 createInstance p@(Peer id ipv4 port) = do
   kbs <- STM.newTMVarIO M.empty
   ss  <- STM.newTMVarIO M.empty
@@ -155,6 +159,50 @@ joinNetwork inst peer@(Peer pid pip pp) = do
 
   dumpKbuckets inst
 
+storeValue :: (Show v) => Instance i v -> Peer -> ID -> v -> IO Bool
+storeValue inst dst idata vdata = do
+
+  let msg = Msg Store (_self inst) idata (C.pack . show $ vdata)
+
+  resp <- exchangeMsg inst dst msg
+  return $ isJust resp
+
+iterativeStoreValue :: (Show v) => Instance i v -> ID -> v -> IO Bool
+iterativeStoreValue inst idata vdata = do
+
+  nl <- iterativeFindNode inst idata
+  forkMapM_ (\p -> do
+    storeValue inst p idata vdata ) nl
+
+  return True
+
+findValue :: (Show v,Read v) => Instance i v -> Peer -> ID -> IO (Either [Peer] v)
+findValue inst dst idata = do
+
+  let msg = Msg FindValue (_self inst) idata (C.pack . show $ idata)
+
+  resp <- exchangeMsg inst dst msg
+
+  case resp of
+    Just (Msg Value _ _ bsv)     -> return . Right . read . C.unpack $ bsv
+    Just (Msg NodeList _ _ bsnl) -> return . Left . read . C.unpack $ bsnl
+    Just (Msg _ _ _ bsnl)        -> return . Left $ []
+    Nothing                      -> return . Left $ []
+
+
+iterativeFindValue :: (Show v,Read v) => Instance i v -> ID -> IO (Maybe v)
+iterativeFindValue inst idata = do
+
+  nl <- iterativeFindNode inst idata
+  res <- rights <$> mapM (\p -> findValue inst p idata) nl
+  case null res of
+    True  -> return Nothing
+    False -> return . Just . head $ res
+
+
+
+
+refresh :: Instance i v -> IO ()
 refresh inst = do
   m <- STM.atomically $ STM.readTMVar $ _kbuckets inst
   let ckbi = fst $ M.findMin m
@@ -352,18 +400,40 @@ closestContacts inst i = do
   return closest
 
 
-handle :: Socket -> SockAddr -> C.ByteString -> Instance i v -> IO (Msg)
+--handle :: Socket -> SockAddr -> C.ByteString -> Instance i v -> IO (Msg)
 handle sock sa msgbs inst = do
   when (debug) $ putStrLn "handle"
   case (read $ C.unpack msgbs) of
     (Msg Ping sender sid dat) -> handlePing inst sender sid dat
     (Msg FindClosestNodes sender sid dat) -> handleFindClosestNodes inst sender sid dat
-    (Msg FindValue sender sid dat) -> return $ Msg Pong (_self inst) 1234 (C.pack "blah")
-    (Msg Store sender sid dat) -> return $ Msg Pong (_self inst) 1234 (C.pack "blah")
+    (Msg FindValue sender k _ ) -> handleFindValue inst sender k
+    (Msg Store sender k bsv) -> handleStore inst sender k bsv
     (Msg Ack sender sid dat) -> return $ Msg Pong (_self inst) 1234 (C.pack "blah")
     (Msg NodeList sender sid dat) -> return $ Msg Pong (_self inst) 1234 (C.pack "blah")
     (Msg Value sender sid dat) -> return $ Msg Pong (_self inst) 1234 (C.pack "blah")
     _ -> return $ Msg Error (_self inst) 1234 ( C.pack "Error" )
+
+
+handleFindValue inst sender@(Peer i ip p) k = do
+  when (debug) $ putStrLn "handleFindValue"
+  updateKbucket inst sender
+
+  r <- DHT.Store.lookup k (_ht inst)
+  case r of
+    Just (cksm,v) -> return $ Msg Value (_self inst) k (C.pack $ show v)
+    Nothing       -> do
+      nl <- closestContacts inst k
+      return $ Msg NodeList (_self inst) k (C.pack $ show nl)
+
+
+--handleStore :: Instance i v -> Peer -> Integer -> C.ByteString -> IO Msg
+handleStore inst sender@(Peer i ip p) k bsv = do
+  when (debug) $ putStrLn "handleStore"
+  updateKbucket inst sender
+  let v = read $ C.unpack bsv
+
+  DHT.Store.insert k v (_ht inst)
+  return $ Msg Ack (_self inst) k (C.pack  "Ok")
 
 
 handleFindClosestNodes :: Instance i v -> Peer -> Integer -> C.ByteString -> IO Msg
