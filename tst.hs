@@ -33,11 +33,14 @@ main = do
 
   ha <- inet_addr "127.0.0.1"
 
-  let nodes = [ (Peer nid ha p) | i <- [1..100] , let nid = fromIntegral $ md5i $ Str $ show ((31000 + (10*i))::Natural) , let p = fromIntegral $ 7000 + i ]
+  let nodes = [ (Peer nid ha p) | i <- [1..500] , let nid = fromIntegral $ md5i $ Str $ show ((31000 + (10*i))::Natural) , let p = fromIntegral $ 7000 + i ]
 
   instances::[(Instance Integer Int)] <- mapM createInstance nodes
 
-  mapM_ (flip joinNetwork (head nodes)) $ tail instances
+  mapM_ (\i -> do
+          joinNetwork i (head nodes)
+--          threadDelay $ 500 * 1000
+        ) $ tail instances
 
 {-
   (i::(Instance Integer Int)) <- createInstance (Peer 1234 ha 7001)
@@ -52,13 +55,23 @@ main = do
   joinNetwork l (Peer 1234 ha 7001)
 -}
 
-  threadDelay $ 30 * 1000 * 1000
-  let anode = nodes !! 20
+  --threadDelay $ 30 * 1000 * 1000
 
-  nl <- iterativeFindNode (instances !! 13) (_id anode)
+  mapM (\i -> do
+    let anode = nodes !! i
+
+    putStrLn $ "Searching for node " ++ show (_id anode)
+    nl <- iterativeFindNode (instances !! 30) (_id anode)
+    putStrLn $ "Result: \n " ++ show nl) [250..350]
+
+  threadDelay $ 5 * 1000 * 1000
+
+  let ayb = md5i $ Str $ "aLLyOURbASEaREbELONGtOuS"
+
+  putStrLn $ "\n\n\nSearching for node closest to : " ++ show ayb
+
+  nl <- iterativeFindNode (instances !! 30) ayb
   putStrLn $ "Result: \n " ++ show nl
-
-  threadDelay $ 300 * 1000 * 1000
 
 
   forever $ do

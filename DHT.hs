@@ -15,6 +15,7 @@ import           Text.Read
 
 import qualified Control.Concurrent.STM        as STM
 import           Control.Monad
+import           Control.Monad.Extra
 import           Control.Monad.Loops           (forkMapM, iterateUntil, whileM_)
 import qualified Data.Map                      as M
 import           Data.Maybe
@@ -191,7 +192,6 @@ findNode inst sid i peer@(Peer pid ip p) = do
   let msg = Msg FindClosestNodes (_self inst) sid (C.pack $ show i)
 
   resp <- exchangeMsg inst peer msg
-
   case resp of
          Just (Msg NodeList peer sid' nlbs) -> do
             let (nl::[Peer]) = read $ C.unpack nlbs
@@ -246,19 +246,19 @@ iterativeFindNode inst i = do
            then return $ take (_alpha inst) shortlist
            else return $ take (_k inst) shortlist
 
-    res <- (sortPeersDist inst . nub . concat . rights)
+    res <- (sortPeersDist i . nub . concat . rights)
           <$> forkMapM (findNode inst sid i) sl
 
     let saneres = filter (/= (_self inst)) res
     mapM_ (updateKbucket inst) saneres
-    updateSession inst sid saneres
+    updateSession inst sid i saneres
 
   STM.atomically $ do
     sessions <- STM.takeTMVar $ _sessions inst
     let s = fromJust $ M.lookup sid sessions
     STM.putTMVar (_sessions inst) $ M.delete sid sessions
     closest <- STM.readTMVar $ _closest s
-    return $ take (_k inst) closest
+    return $ take (_k inst) $ sortPeersDist i $ closest
 
 
 undoneSession :: Instance i v -> SessionID -> IO Bool
@@ -298,8 +298,8 @@ undoneSession inst sid = do
 
 
 
-updateSession :: Instance i v -> SessionID -> [Peer] -> IO ()
-updateSession inst sid peers = do
+updateSession :: Instance i v -> SessionID -> ID -> [Peer] -> IO ()
+updateSession inst sid i peers = do
   when (debug) $ putStrLn "updateSession"
   (sl,pend,vis,clo) <- STM.atomically $ do
     sessions <- STM.readTMVar $ _sessions inst
@@ -313,9 +313,9 @@ updateSession inst sid peers = do
     return (shortlist,pending,visited,closest)
 
 
-  let nsl = take (_k inst) $ sortPeersDist inst $ ((sl `union` peers) \\ (vis `union` pend))
+  let nsl = take (_k inst) $ sortPeersDist i $ ((sl `union` peers) \\ (vis `union` pend))
   let osl = sl
-  let nclosest = take (_k inst) $ sortPeersDist inst $ (vis `union` clo)
+  let nclosest = take (_k inst) $ sortPeersDist i $ (vis `union` clo)
   let oclosest = clo
 
 
@@ -330,8 +330,7 @@ updateSession inst sid peers = do
 
   when (debug) $ putStrLn "updateSession:done"
 
-sortPeersDist inst = sortBy (comparing (distance myid . _id))
-  where myid = _id . _self $ inst
+sortPeersDist i =  sortBy ((comparing (distance i . _id)))
 
 closestContacts :: Instance i v -> ID -> IO [Peer]
 closestContacts inst i = do
@@ -339,17 +338,18 @@ closestContacts inst i = do
   let myid = _id $ _self inst
   let ind = index $ distance myid i
 
-  case M.lookupGE ind kbm of
+  closest <- case M.lookupGE ind kbm of
     Just buck -> do
       ps <- STM.atomically $ STM.readTMVar $ snd buck
-      return $ sortPeersDist inst  ps
+      return $ sortPeersDist i ps
 
     Nothing -> case M.lookupLT ind kbm of
         Just buck -> do
           ps <- STM.atomically $ STM.readTMVar $ snd buck
-          return $ sortPeersDist inst ps
+          return $ sortPeersDist i ps
         Nothing -> return []
-
+  --putStrLn $ "Closest: " ++ show closest
+  return closest
 
 
 handle :: Socket -> SockAddr -> C.ByteString -> Instance i v -> IO (Msg)
@@ -389,14 +389,14 @@ dumpKbuckets inst = do
   _ <- STM.atomically $ STM.takeTMVar (_ioLock inst)
   let bl = M.toList m
 
-  putStrLn $ "Node: " ++ (show $ _self inst)
+  when(debug) $ putStrLn $ "Node: " ++ (show $ _self inst)
 
   mapM_ (\(k,b) -> do
     cs <- STM.atomically $ STM.readTMVar b
-    putStrLn $ "Bucket " ++ show k ++ " : " ++ show cs
+    when(debug) $ putStrLn $ "Bucket " ++ show k ++ " : " ++ show cs
     ) bl
 
-  putStrLn "\n"
+  when (debug) $ putStrLn "\n"
 
   STM.atomically $ STM.putTMVar (_ioLock inst) ()
 
@@ -410,7 +410,7 @@ updateKbucket inst sender@(Peer i ip p) = do
     then return ()
     else putStrLn "Still there"
 
-  let (Peer myid _ _) = _self inst
+  let myid = _id . _self $  inst
   let ind = index $ distance myid i
 
   m <- STM.atomically $ STM.takeTMVar (_kbuckets inst)
@@ -483,7 +483,8 @@ exchangeMsg inst dst@(Peer i ip p) msg = do
   r <- STM.readTVarIO gotreply
 -}
 
-  (bs,sa) <- recvFrom sock 1024
+  (bs,sa) <- recvFrom sock 4096
+  --putStrLn $ "exchangeMsg : " ++ (show $ C.unpack bs)
   r <- case readMaybe $ C.unpack bs of
            Just (Msg{}) -> return $ Just $ read $ C.unpack bs
            Nothing      -> return Nothing
