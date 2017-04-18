@@ -1,6 +1,7 @@
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 module DHT
   ( module DHT
   , module DHT.Store
@@ -41,43 +42,47 @@ k = 20
 
 debug = False
 
+--class (Show i,Read i,Eq i,Ord i,Enum i,Bits i,Random i) => IDClass i
 
 type IPv4 = HostAddress
 type Port = Word16
 
-type ID = Integer
+newtype ID i = ID i
+  deriving (Show,Read,Num,Eq,Ord,Random,Bits,Enum)
 
-type SessionID = Integer
+type SessionID i = ID i
 data SessionMode = ASEARCH | KSEARCH
   deriving Eq
 
-data Peer = Peer { _id::ID, _ip::IPv4, _port::Port }
-                  deriving (Eq,Show,Read)
+data Peer i = Peer { _id::ID i, _ip::IPv4, _port::Port }
+  deriving (Eq,Show,Read)
 
+type MsgID i = ID i
 data MsgType = Ping | Pong | FindClosestNodes | FindValue | Store | NodeList | Value | Ack | Error
-                  deriving (Show,Read)
+  deriving (Show,Read)
 
-data Msg = Msg { _type   :: MsgType
-               , _sender :: Peer
-               , _mid    :: Integer
-               , _data   :: C.ByteString
-               } deriving (Show,Read)
+data Msg i = Msg { _type   :: MsgType
+                 , _sender :: Peer i
+                 , _mid    :: MsgID i
+                 , _data   :: C.ByteString
+                 }
+  deriving (Show,Read)
 
-data Session = Session   { _sessionid  :: Integer
-                         , _shortlist  :: STM.TMVar [Peer]
-                         , _shortlist' :: STM.TMVar [Peer]
-                         , _visited    :: STM.TMVar [Peer]
-                         , _pending    :: STM.TMVar [Peer]
-                         , _closest    :: STM.TMVar [Peer]
-                         , _closest'   :: STM.TMVar [Peer]
-                         , _mode       :: STM.TMVar SessionMode
-                         }
+data Session i = Session   { _sessionid  :: ID i
+                           , _shortlist  :: STM.TMVar [Peer i]
+                           , _shortlist' :: STM.TMVar [Peer i]
+                           , _visited    :: STM.TMVar [Peer i]
+                           , _pending    :: STM.TMVar [Peer i]
+                           , _closest    :: STM.TMVar [Peer i]
+                           , _closest'   :: STM.TMVar [Peer i]
+                           , _mode       :: STM.TMVar SessionMode
+                           }
 
 
-data Instance i v = Instance { _self      :: Peer
-                             , _kbuckets  :: STM.TMVar (M.Map Integer (STM.TMVar [Peer]))
-                             , _sessions  :: STM.TMVar (M.Map Integer Session)
-                             , _ht        :: DHT i v
+data Instance i v = Instance { _self      :: Peer i
+                             , _kbuckets  :: STM.TMVar (M.Map (ID i) (STM.TMVar [Peer i]))
+                             , _sessions  :: STM.TMVar (M.Map i (Session i))
+                             , _ht        :: DHT (ID i) v
                              , _alpha     :: Int
                              , _k         :: Int
                              ,_ioLock     :: STM.TMVar ()
@@ -87,7 +92,7 @@ data Instance i v = Instance { _self      :: Peer
 
 
 
-newSession :: Instance i v -> IO SessionID
+newSession ::(Ord i,Random i) => Instance i v -> IO (SessionID i)
 newSession inst = do
 
   sl <- STM.newTMVarIO []
@@ -100,12 +105,11 @@ newSession inst = do
 
   ss <- STM.atomically $ STM.takeTMVar $ _sessions inst
   r <- iterateUntil (`M.notMember` ss) randomIO
-  let s = Session r sl sl' v p c c' m
+  let s = Session (ID r) sl sl' v p c c' m
   let ss' = M.insert r s ss
   STM.atomically $ STM.putTMVar (_sessions inst) ss'
 
-  return r
-
+  return (ID r)
 
 
 --createInstance :: (Read i , Show i) => Peer -> IO (Instance i v)
@@ -146,28 +150,28 @@ createInstance p@(Peer id ipv4 port) = do
   return inst
 
 
-joinNetwork :: Instance i v -> Peer -> IO ()
-joinNetwork inst peer@(Peer pid pip pp) = do
+joinNetwork :: (Show i, Read i, Ord i, Enum i, Bits i, Random i) => Instance i v -> Peer i -> IO ()
+joinNetwork inst peer@(Peer (ID pid) pip pp) = do
 
   when (debug) $ putStrLn "joinNetwork"
 
   updateKbucket inst peer
   nodes <- iterativeFindNode inst $ _id $ _self inst
-  nodes' <- iterativeFindNode inst $ (_id $ _self inst) + 1337
 
   refresh inst
 
   dumpKbuckets inst
 
-storeValue :: (Show v) => Instance i v -> Peer -> ID -> v -> IO Bool
+
+
+--storeValue :: (Show i, Read i, Show v) => Instance i v -> Peer i -> ID i -> v -> IO Bool
 storeValue inst dst idata vdata = do
 
   let msg = Msg Store (_self inst) idata (C.pack . show $ vdata)
 
-  resp <- exchangeMsg inst dst msg
-  return $ isJust resp
+  isJust <$>  (exchangeMsg inst dst msg)
 
-iterativeStoreValue :: (Show v) => Instance i v -> ID -> v -> IO Bool
+iterativeStoreValue :: (Show i, Read i, Ord i,Enum i, Bits i, Random i, Show v) => Instance i v -> ID i -> v -> IO Bool
 iterativeStoreValue inst idata vdata = do
 
   nl <- iterativeFindNode inst idata
@@ -176,7 +180,7 @@ iterativeStoreValue inst idata vdata = do
 
   return True
 
-findValue :: (Show v,Read v) => Instance i v -> Peer -> ID -> IO (Either [Peer] v)
+findValue :: (Show i,Read i,Show v,Read v) => Instance i v -> Peer i -> ID i -> IO (Either [Peer i] v)
 findValue inst dst idata = do
 
   let msg = Msg FindValue (_self inst) idata (C.pack . show $ idata)
@@ -190,7 +194,7 @@ findValue inst dst idata = do
     Nothing                      -> return . Left $ []
 
 
-iterativeFindValue :: (Show v,Read v) => Instance i v -> ID -> IO (Maybe v)
+iterativeFindValue :: (Show i, Read i, Ord i, Enum i, Bits i, Random i, Show v, Read v) => Instance i v -> ID i -> IO (Maybe v)
 iterativeFindValue inst idata = do
 
   nl <- iterativeFindNode inst idata
@@ -202,15 +206,16 @@ iterativeFindValue inst idata = do
 
 
 
-refresh :: Instance i v -> IO ()
+refresh :: (Show i, Read i, Ord i,Enum i, Bits i ,Random i) => Instance i v -> IO ()
 refresh inst = do
   m <- STM.atomically $ STM.readTMVar $ _kbuckets inst
-  let ckbi = fst $ M.findMin m
-  forM_  ([ckbi..(fromIntegral $ _k inst)] :: [Integer]) (iterativeFindNode inst <=< index2id)
+  let lkbi = fst $ M.findMin m
+  let hkbi = fst $ M.findMax m
+  forM_  ([lkbi..hkbi]) (iterativeFindNode inst <=< index2id)
 
 
 
-pingcheck :: Instance i v -> Peer -> IO Bool
+pingcheck :: (Show i, Read i, Random i ) => Instance i v -> Peer i -> IO Bool
 pingcheck inst dst@(Peer i ip p)  = do
   --putStrLn $ "entering Pingcheck : " ++ show dst
 
@@ -219,13 +224,16 @@ pingcheck inst dst@(Peer i ip p)  = do
   let msg = Msg Ping (_self inst) sid (C.pack "Ping!!!")
 
   resp <- exchangeMsg inst dst msg
-  return $ isJust resp
+  case resp of
+    Just (Msg Pong _ _ _) -> return True
+    Just (Msg _ _ _ _)    -> return False
+    Nothing               -> return False
 
 
 
 
-findNode :: Instance i v -> SessionID -> ID -> Peer -> IO [Peer]
-findNode inst sid i peer@(Peer pid ip p) = do
+findNode :: (Show i,Read i,Ord i) => Instance i v -> SessionID i -> ID i -> Peer i -> IO [Peer i]
+findNode inst (ID sid) i peer@(Peer pid ip p) = do
 
   when (debug) $ putStrLn "findNode"
 
@@ -237,12 +245,12 @@ findNode inst sid i peer@(Peer pid ip p) = do
       STM.putTMVar (_pending s) $ peer:pending
 
 
-  let msg = Msg FindClosestNodes (_self inst) sid (C.pack $ show i)
+  let msg = Msg FindClosestNodes (_self inst) (ID sid) (C.pack $ show i)
 
   resp <- exchangeMsg inst peer msg
   case resp of
          Just (Msg NodeList peer sid' nlbs) -> do
-            let (nl::[Peer]) = read $ C.unpack nlbs
+            let (nl) = read $ C.unpack nlbs
             STM.atomically $ do
                 sessions <- STM.readTMVar $ _sessions inst
                 let s = fromJust $ M.lookup sid sessions
@@ -271,11 +279,11 @@ findNode inst sid i peer@(Peer pid ip p) = do
 
              return []
 
-iterativeFindNode :: Instance i v -> ID -> IO [Peer]
-iterativeFindNode inst i = do
+iterativeFindNode :: (Show i , Read i, Ord i, Enum i, Bits i,Random i) => Instance i v -> ID i -> IO [Peer i]
+iterativeFindNode inst i'@(ID i) = do
   when (debug) $ putStrLn "iterativeFindNode"
-  sid <- newSession inst
-  shortlist <- closestContacts inst i
+  sid'@(ID sid) <- newSession inst
+  shortlist <- closestContacts inst i'
   STM.atomically $ do
     sessions <- STM.readTMVar $ _sessions inst
     let s = fromJust $ M.lookup sid sessions
@@ -283,7 +291,7 @@ iterativeFindNode inst i = do
     STM.putTMVar (_shortlist s) $ take (_alpha inst) $ shortlist
 
 
-  whileM_ (undoneSession inst sid) $ do
+  whileM_ (undoneSession inst sid') $ do
     when (debug) $ putStrLn "iterativeFindNode:while"
     sl <- STM.atomically $ do
         sessions <- STM.readTMVar $ _sessions inst
@@ -294,23 +302,23 @@ iterativeFindNode inst i = do
            then return $ take (_alpha inst) shortlist
            else return $ take (_k inst) shortlist
 
-    res <- (sortPeersDist i . nub . concat . rights)
-          <$> forkMapM (findNode inst sid i) sl
+    res <- (sortPeersDist i' . nub . concat . rights)
+          <$> forkMapM (findNode inst sid' i') sl
 
     let saneres = filter (/= (_self inst)) res
     mapM_ (updateKbucket inst) saneres
-    updateSession inst sid i saneres
+    updateSession inst sid' i' saneres
 
   STM.atomically $ do
     sessions <- STM.takeTMVar $ _sessions inst
     let s = fromJust $ M.lookup sid sessions
     STM.putTMVar (_sessions inst) $ M.delete sid sessions
     closest <- STM.readTMVar $ _closest s
-    return $ take (_k inst) $ sortPeersDist i $ closest
+    return $ take (_k inst) $ sortPeersDist i' $ closest
 
 
-undoneSession :: Instance i v -> SessionID -> IO Bool
-undoneSession inst sid = do
+undoneSession :: (Eq i,Ord i) => Instance i v -> SessionID i -> IO Bool
+undoneSession inst sid'@(ID sid) = do
   when (debug) $ putStrLn "undoneSession"
   (sl,sl',clo,clo',m) <- STM.atomically $ do
     sessions <- STM.readTMVar $ _sessions inst
@@ -346,8 +354,8 @@ undoneSession inst sid = do
 
 
 
-updateSession :: Instance i v -> SessionID -> ID -> [Peer] -> IO ()
-updateSession inst sid i peers = do
+updateSession :: (Ord i,Bits i) => Instance i v -> SessionID i -> ID i -> [Peer i] -> IO ()
+updateSession inst sid'@(ID sid) i peers = do
   when (debug) $ putStrLn "updateSession"
   (sl,pend,vis,clo) <- STM.atomically $ do
     sessions <- STM.readTMVar $ _sessions inst
@@ -378,9 +386,10 @@ updateSession inst sid i peers = do
 
   when (debug) $ putStrLn "updateSession:done"
 
+--sortPeersDist :: (ID i) -> [Peer i] -> [Peer i]
 sortPeersDist i =  sortBy ((comparing (distance i . _id)))
 
-closestContacts :: Instance i v -> ID -> IO [Peer]
+closestContacts :: (Ord i,Enum i , Bits i) => Instance i v -> ID i -> IO [Peer i]
 closestContacts inst i = do
   kbm <- STM.atomically $ STM.readTMVar $ _kbuckets inst
   let myid = _id $ _self inst
@@ -398,7 +407,6 @@ closestContacts inst i = do
         Nothing -> return []
   --putStrLn $ "Closest: " ++ show closest
   return closest
-
 
 --handle :: Socket -> SockAddr -> C.ByteString -> Instance i v -> IO (Msg)
 handle sock sa msgbs inst = do
@@ -436,7 +444,7 @@ handleStore inst sender@(Peer i ip p) k bsv = do
   return $ Msg Ack (_self inst) k (C.pack  "Ok")
 
 
-handleFindClosestNodes :: Instance i v -> Peer -> Integer -> C.ByteString -> IO Msg
+handleFindClosestNodes :: (Show i,Read i,Ord i,Enum i,Bits i,Random i) => Instance i v -> Peer i -> MsgID i -> C.ByteString -> IO (Msg i)
 handleFindClosestNodes inst sender@(Peer i ip p) epid dat = do
   when (debug) $ putStrLn "handleFindClosestNodes"
   updateKbucket inst sender
@@ -446,14 +454,14 @@ handleFindClosestNodes inst sender@(Peer i ip p) epid dat = do
 
 
 
-handlePing :: Instance i v -> Peer -> Integer -> C.ByteString -> IO Msg
+handlePing :: (Show i,Read i,Eq i,Ord i,Enum i,Bits i,Random i) => Instance i v -> Peer i -> MsgID i -> C.ByteString -> IO (Msg i)
 handlePing inst sender@(Peer i ip p) epid dat = do
   when (debug) $ putStrLn "handlePing"
   updateKbucket inst sender
   return $ Msg Pong (_self inst) epid (C.pack "Pong!!!")
 
 
-dumpKbuckets :: Instance i v -> IO ()
+dumpKbuckets :: (Show i,Read i) => Instance i v -> IO ()
 dumpKbuckets inst = do
   m <- STM.atomically $ STM.readTMVar (_kbuckets inst)
   _ <- STM.atomically $ STM.takeTMVar (_ioLock inst)
@@ -472,7 +480,7 @@ dumpKbuckets inst = do
 
 
 
-updateKbucket :: Instance i v -> Peer -> IO ()
+updateKbucket :: (Show i,Read i,Eq i,Ord i,Enum i,Bits i,Random i) => Instance i v -> Peer i -> IO ()
 updateKbucket inst sender@(Peer i ip p) = do
   when (debug) $ putStrLn "updateKbucket"
   -- Update kbucket if sender /= self
@@ -485,7 +493,7 @@ updateKbucket inst sender@(Peer i ip p) = do
 
   m <- STM.atomically $ STM.takeTMVar (_kbuckets inst)
   if M.member ind m
-     then do
+    then do
        let kbuck = fromJust $ M.lookup ind m
        peers <- STM.atomically $ STM.takeTMVar kbuck
        if elem sender peers -- sender is in kbucket
@@ -511,20 +519,20 @@ updateKbucket inst sender@(Peer i ip p) = do
        STM.atomically $ STM.putTMVar (_kbuckets inst) m'
 
 
-index :: Integer -> Integer
-index = floor . logBase 2 . fromIntegral
+index :: (Enum i) => ID i -> ID i
+index = toEnum . floor . logBase 2  . fromIntegral . fromEnum
 
-index2id :: Integer -> IO Integer
+index2id :: (Enum i) => ID i -> IO (ID i)
 index2id i = do
-              let base = 2 ^ i
-              let nbase = base * i
-              randomRIO (base,nbase)
+              let base = 2 ^ (fromEnum i)
+              let nbase = base * (fromEnum i)
+              (ID . toEnum) <$> randomRIO (base,nbase)
 
-distance :: Integer -> Integer -> Integer
+distance :: (Bits i) => ID i -> ID i -> ID i
 distance = xor
 
 
-exchangeMsg :: Instance i v -> Peer -> Msg -> IO (Maybe Msg)
+exchangeMsg :: (Show i,Read i,Read (Maybe (Msg i))) => Instance i v -> Peer i -> Msg i -> IO (Maybe (Msg i))
 exchangeMsg inst dst@(Peer i ip p) msg = do
   when (debug) $ putStrLn "exchangeMsg"
   let (Peer myid myip myport) = _self inst
@@ -555,11 +563,8 @@ exchangeMsg inst dst@(Peer i ip p) msg = do
 
   (bs,sa) <- recvFrom sock 4096
   --putStrLn $ "exchangeMsg : " ++ (show $ C.unpack bs)
-  r <- case readMaybe $ C.unpack bs of
-           Just (Msg{}) -> return $ Just $ read $ C.unpack bs
-           Nothing      -> return Nothing
   close sock
-  return r
-
-
+  case (readMaybe $ C.unpack bs) of
+           Just x  -> return $ Just x
+           Nothing -> return Nothing
 

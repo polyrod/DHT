@@ -35,9 +35,9 @@ main = do
 
   ha <- inet_addr "127.0.0.1"
 
-  let nodes = [ (Peer nid ha p) | i <- [1..100] , let nid = fromIntegral $ md5i $ Str $ show ((31000 + (10*i))::Natural) , let p = fromIntegral $ 7000 + i ]
+  let nodes = [ (Peer nid ha p) | i <- [1..100] , let nid =  ID $ md5i $ Str $ show ((31000 + (10*i))::Natural) , let p = fromIntegral $ 7000 + i ]
 
-  instances::[(Instance Integer Int)] <- mapM createInstance nodes
+  instances  <- mapM createInstance nodes
 
   mapM_ (\i -> do
           joinNetwork i (head nodes)
@@ -58,13 +58,13 @@ main = do
 
   putStrLn $ "\n\n\nSearching for node closest to : " ++ show ayb
 
-  nl <- iterativeFindNode (instances !! 3) ayb
+  nl <- iterativeFindNode (instances !! 3) $ ID ayb
   putStrLn $ "Result: \n " ++ show nl
 
   putStrLn $ "\n\n\nStoring value " ++ show ayb ++ " => 1337"
 
-  iterativeStoreValue (instances !! 2) ayb 1337
-  res <- iterativeFindValue (instances !! 4) ayb
+  iterativeStoreValue (instances !! 2) (ID ayb) 1337
+  res <- iterativeFindValue (instances !! 4) $ ID ayb
   putStrLn $ "\n\n\nReading stored value for " ++ show ayb ++ " => 1337"
   print res
 
