@@ -3,36 +3,46 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 module DHT
-  ( module DHT
-  , module DHT.Store
+  ( --module DHT
+  --, module DHT.Store
+  ID(..)
+  ,Peer(..)
+  ,new
+  ,join
+  ,get
+  ,put
+  ,peers
   ) where
 
 import           Control.Applicative
-import           Control.Concurrent
-import           Control.Concurrent.Supervisor
-import           Control.Exception             hiding (handle)
-import           Data.Either
-import           Text.Read
 
+import           Control.Concurrent
 import qualified Control.Concurrent.STM        as STM
-import           Control.Monad
-import           Control.Monad.Extra
+import           Control.Concurrent.Supervisor
+
+import           Control.Exception             hiding (handle)
+
+import           Control.Monad                 hiding (join)
+import           Control.Monad.Extra           hiding (join)
 import           Control.Monad.Loops           (forkMapM, forkMapM_,
                                                 iterateUntil, whileM_)
+import           Data.Bits
+import qualified Data.ByteString.Char8         as C
+import           Data.Either
+import           Data.Hash.MD5
+import           Data.List
 import qualified Data.Map                      as M
 import           Data.Maybe
 import           Data.Ord
+import           Data.Word
+
+import           DHT.Store
+
 import           Network.Socket                hiding (recvFrom, sendTo)
 import           Network.Socket.ByteString
+
 import           System.Random
-
-
-import           Data.Bits
-import qualified Data.ByteString.Char8         as C
-import           Data.Hash.MD5
-import           Data.List
-import           Data.Word
-import           DHT.Store
+import           Text.Read                     hiding (get)
 
 
 a:: Int
@@ -90,8 +100,25 @@ data Instance i v = Instance { _self      :: Peer i
 
 
 
+-- Interface
+new :: (Read i , Show i,Ord i,Enum i,Bits i,Random i,Show v,Read v) => Peer i -> IO (Instance i v)
+new = createInstance
+
+join :: (Show i, Read i, Ord i, Enum i, Bits i, Random i) => Instance i v -> Peer i -> IO ()
+join = joinNetwork
+
+put :: (Show i, Read i, Ord i,Enum i, Bits i, Random i, Show v) => Instance i v -> ID i -> v -> IO Bool
+put = iterativeStoreValue
+
+get :: (Show i, Read i, Ord i, Enum i, Bits i, Random i, Show v, Read v) => Instance i v -> ID i -> IO (Maybe v)
+get = iterativeFindValue
+
+peers :: (Show i , Read i, Ord i, Enum i, Bits i,Random i) => Instance i v -> ID i -> IO [Peer i]
+peers = iterativeFindNode
 
 
+
+-- Implementation
 newSession ::(Ord i,Random i) => Instance i v -> IO (SessionID i)
 newSession inst = do
 
@@ -150,6 +177,7 @@ createInstance p@(Peer id ipv4 port) = do
   return inst
 
 
+
 joinNetwork :: (Show i, Read i, Ord i, Enum i, Bits i, Random i) => Instance i v -> Peer i -> IO ()
 joinNetwork inst peer@(Peer (ID pid) pip pp) = do
 
@@ -164,12 +192,13 @@ joinNetwork inst peer@(Peer (ID pid) pip pp) = do
 
 
 
---storeValue :: (Show i, Read i, Show v) => Instance i v -> Peer i -> ID i -> v -> IO Bool
+storeValue :: (Show i, Read i, Show v) => Instance i v -> Peer i -> ID i -> v -> IO Bool
 storeValue inst dst idata vdata = do
 
   let msg = Msg Store (_self inst) idata (C.pack . show $ vdata)
 
   isJust <$>  (exchangeMsg inst dst msg)
+
 
 iterativeStoreValue :: (Show i, Read i, Ord i,Enum i, Bits i, Random i, Show v) => Instance i v -> ID i -> v -> IO Bool
 iterativeStoreValue inst idata vdata = do

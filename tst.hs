@@ -6,7 +6,8 @@ import           Control.Concurrent.STM
 import           Control.Monad
 import           Data.Hash.MD5
 import qualified Data.Map               as M
-import           DHT
+import qualified DHT                    as DHT
+import           DHT.Store
 import           Network.Socket
 import           Numeric.Natural
 import           Prelude                hiding (lookup)
@@ -14,6 +15,7 @@ import           Prelude                hiding (lookup)
 
 
 main = do
+  -- DHT.Store
   dht <- newDHT
   insert 123 "blah" dht
   r <- lookup 123 dht
@@ -33,14 +35,15 @@ main = do
   r <- lookup 123 dht
   print r
 
+  -- DHT
   ha <- inet_addr "127.0.0.1"
 
-  let nodes = [ (Peer nid ha p) | i <- [1..100] , let nid =  ID $ md5i $ Str $ show ((31000 + (10*i))) , let p =  7000 + i ]
+  let nodes = [ (DHT.Peer nid ha p) | i <- [1..100] , let nid =  DHT.ID $ md5i $ Str $ show ((31000 + (10*i))) , let p =  7000 + i ]
 
-  instances  <- mapM createInstance nodes
+  instances  <- mapM DHT.new nodes
 
   mapM_ (\i -> do
-          joinNetwork i (head nodes)
+          DHT.join i (head nodes)
         ) $ tail instances
 
 {-
@@ -48,23 +51,23 @@ main = do
     let anode = nodes !! i
 
     putStrLn $ "Searching for node " ++ show (_id anode)
-    nl <- iterativeFindNode (instances !! 30) (_id anode)
+    nl <- DHT.peers (instances !! 30) (_id anode)
     putStrLn $ "Result: \n " ++ show nl) [50..100]
 
   threadDelay $ 5 * 1000 * 1000
 -}
 
-  let ayb = ID . md5i $ Str $ "aLLyOURbASEaREbELONGtOuS"
+  let ayb = DHT.ID . md5i $ Str $ "aLLyOURbASEaREbELONGtOuS"
 
   putStrLn $ "\n\n\nSearching for node closest to : " ++ show ayb
 
-  nl <- iterativeFindNode (instances !! 3) ayb
+  nl <- DHT.peers (instances !! 3) ayb
   putStrLn $ "Result: \n " ++ show nl
 
   putStrLn $ "\n\n\nStoring value " ++ show ayb ++ " => 1337"
 
-  iterativeStoreValue (instances !! 2) ayb 1337
-  res <- iterativeFindValue (instances !! 4) ayb
+  DHT.put (instances !! 2) ayb 1337
+  res <- DHT.get (instances !! 4) ayb
   putStrLn $ "\n\n\nReading stored value for " ++ show ayb ++ " => 1337"
   print res
 
