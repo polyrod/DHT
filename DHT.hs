@@ -5,10 +5,13 @@
 module DHT
   ( --module DHT
   --, module DHT.Store
+  -- * @DHT@ Datatypes
   ID(..)
   ,Peer(..)
+  -- * Creation
   ,new
   ,join
+  -- * Querying/Insertion
   ,get
   ,put
   ,peers
@@ -44,9 +47,10 @@ import           Network.Socket.ByteString
 import           System.Random
 import           Text.Read                     hiding (get)
 
-
+-- | a - The Alpha value in Kademlia used for parallelism
 a:: Int
 a = 3
+-- | a - The K value in Kademlia used number of entries in a kbucket
 k:: Int
 k = 20
 
@@ -54,23 +58,33 @@ debug = False
 
 --class (Show i,Read i,Eq i,Ord i,Enum i,Bits i,Random i) => IDClass i
 
+-- | typealias for Network.Socket.HostAdress
 type IPv4 = HostAddress
+
+-- | typealias for Network.Socket.PortNum
 type Port = Word16
 
+-- | The main identifier datatype used in implementation
 newtype ID i = ID i
   deriving (Show,Read,Eq,Ord,Random,Bits,Enum)
 
+-- | Specialized typealias for Session
 type SessionID i = ID i
 data SessionMode = ASEARCH | KSEARCH
   deriving Eq
 
+-- | A Node datatype for peers in the Kademlia network
 data Peer i = Peer { _id::ID i, _ip::IPv4, _port::Port }
   deriving (Eq,Show,Read)
 
+-- | Specialized typealias for Msg identifier
 type MsgID i = ID i
+
+-- | Message types used in the implementation
 data MsgType = Ping | Pong | FindClosestNodes | FindValue | Store | NodeList | Value | Ack | Error
   deriving (Show,Read)
 
+-- | Message datatype
 data Msg i = Msg { _type   :: MsgType
                  , _sender :: Peer i
                  , _mid    :: MsgID i
@@ -78,6 +92,7 @@ data Msg i = Msg { _type   :: MsgType
                  }
   deriving (Show,Read)
 
+-- | Session datatype ; used internaly for iterative lookups
 data Session i = Session   { _sessionid  :: ID i
                            , _shortlist  :: STM.TMVar [Peer i]
                            , _shortlist' :: STM.TMVar [Peer i]
@@ -89,6 +104,7 @@ data Session i = Session   { _sessionid  :: ID i
                            }
 
 
+-- | Instance datatype paramterized over Key and Value for the Store
 data Instance i v = Instance { _self      :: Peer i
                              , _kbuckets  :: STM.TMVar (M.Map (ID i) (STM.TMVar [Peer i]))
                              , _sessions  :: STM.TMVar (M.Map i (Session i))
@@ -101,18 +117,24 @@ data Instance i v = Instance { _self      :: Peer i
 
 
 -- Interface
+
+-- | create a new Instance
 new :: (Read i , Show i,Ord i,Enum i,Bits i,Random i,Show v,Read v) => Peer i -> IO (Instance i v)
 new = createInstance
 
+-- | joins Instance to a connected Peer and Kademlia network
 join :: (Show i, Read i, Ord i, Enum i, Bits i, Random i) => Instance i v -> Peer i -> IO ()
 join = joinNetwork
 
+-- | stores a value in the DHT
 put :: (Show i, Read i, Ord i,Enum i, Bits i, Random i, Show v) => Instance i v -> ID i -> v -> IO Bool
 put = iterativeStoreValue
 
+-- | retrieves a value from the DHT
 get :: (Show i, Read i, Ord i, Enum i, Bits i, Random i, Show v, Read v) => Instance i v -> ID i -> IO (Maybe v)
 get = iterativeFindValue
 
+-- | retrieves list of Peers closest to an ID
 peers :: (Show i , Read i, Ord i, Enum i, Bits i,Random i) => Instance i v -> ID i -> IO [Peer i]
 peers = iterativeFindNode
 
