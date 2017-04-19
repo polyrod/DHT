@@ -1,0 +1,47 @@
+name:                DHT 
+version:             0.1.0.0
+-- synopsis:
+-- description:
+--homepage:            https://github.com/githubuser/simple-library#readme
+license:             BSD3
+license-file:        LICENSE
+author:              Maurizio Di Pietro
+maintainer:          maurizio.di.pietro.mdp@gmail.com
+copyright:           2017 Maurizio Di Pietro
+category:            P2P distributed concurrent hashtable
+build-type:          Simple
+extra-source-files:  README.md
+cabal-version:       >=1.10
+
+library
+  hs-source-dirs:      src
+  exposed-modules:     DHT,DHT.Store
+  build-depends:       base
+                     , containers
+                     , stm
+                     , random
+                     , network
+                     , mtl
+                     , threads-supervisor
+                     , bytestring
+                     , monad-loops
+                     , extra
+                     , MissingH 
+  default-language:    Haskell2010
+
+executable tst 
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , DHT
+                     , stm
+                     , MissingH
+                     , containers
+                     , network
+  default-language:    Haskell2010
+
+
+--source-repository head
+--  type:     git
+--  location: https://github.com/githubuser/simple-library

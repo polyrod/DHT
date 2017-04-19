@@ -56,7 +56,7 @@ k = 20
 
 debug = False
 
---class (Show i,Read i,Eq i,Ord i,Enum i,Bits i,Random i) => IDClass i
+--class (Show i,Read i,Eq i,Ord i,Integral i,Bits i,Random i) => IDClass i
 
 -- | typealias for Network.Socket.HostAdress
 type IPv4 = HostAddress
@@ -66,7 +66,7 @@ type Port = Word16
 
 -- | The main identifier datatype used in implementation
 newtype ID i = ID i
-  deriving (Show,Read,Eq,Ord,Random,Bits,Enum)
+  deriving (Show,Read,Eq,Ord,Random,Bits,Integral,Num,Enum,Real)
 
 -- | Specialized typealias for Session
 type SessionID i = ID i
@@ -119,23 +119,23 @@ data Instance i v = Instance { _self      :: Peer i
 -- Interface
 
 -- | create a new Instance
-new :: (Read i , Show i,Ord i,Enum i,Bits i,Random i,Show v,Read v) => Peer i -> IO (Instance i v)
+new :: (Read i , Show i,Ord i,Integral i,Bits i,Random i,Show v,Read v) => Peer i -> IO (Instance i v)
 new = createInstance
 
 -- | joins Instance to a connected Peer and Kademlia network
-join :: (Show i, Read i, Ord i, Enum i, Bits i, Random i) => Instance i v -> Peer i -> IO ()
+join :: (Show i, Read i, Ord i, Integral i, Bits i, Random i) => Instance i v -> Peer i -> IO ()
 join = joinNetwork
 
 -- | stores a value in the DHT
-put :: (Show i, Read i, Ord i,Enum i, Bits i, Random i, Show v) => Instance i v -> ID i -> v -> IO Bool
+put :: (Show i, Read i, Ord i,Integral i, Bits i, Random i, Show v) => Instance i v -> ID i -> v -> IO Bool
 put = iterativeStoreValue
 
 -- | retrieves a value from the DHT
-get :: (Show i, Read i, Ord i, Enum i, Bits i, Random i, Show v, Read v) => Instance i v -> ID i -> IO (Maybe v)
+get :: (Show i, Read i, Ord i, Integral i, Bits i, Random i, Show v, Read v) => Instance i v -> ID i -> IO (Maybe v)
 get = iterativeFindValue
 
 -- | retrieves list of Peers closest to an ID
-peers :: (Show i , Read i, Ord i, Enum i, Bits i,Random i) => Instance i v -> ID i -> IO [Peer i]
+peers :: (Show i , Read i, Ord i, Integral i, Bits i,Random i) => Instance i v -> ID i -> IO [Peer i]
 peers = iterativeFindNode
 
 
@@ -161,7 +161,7 @@ newSession inst = do
   return (ID r)
 
 
-createInstance :: (Read i , Show i,Ord i,Enum i,Bits i,Random i,Show v,Read v) => Peer i -> IO (Instance i v)
+createInstance :: (Read i , Show i,Ord i,Integral i,Bits i,Random i,Show v,Read v) => Peer i -> IO (Instance i v)
 createInstance p@(Peer id ipv4 port) = do
   kbs <- STM.newTMVarIO M.empty
   ss  <- STM.newTMVarIO M.empty
@@ -200,7 +200,7 @@ createInstance p@(Peer id ipv4 port) = do
 
 
 
-joinNetwork :: (Show i, Read i, Ord i, Enum i, Bits i, Random i) => Instance i v -> Peer i -> IO ()
+joinNetwork :: (Show i, Read i, Ord i, Integral i, Bits i, Random i) => Instance i v -> Peer i -> IO ()
 joinNetwork inst peer@(Peer (ID pid) pip pp) = do
 
   when (debug) $ putStrLn "joinNetwork"
@@ -222,7 +222,7 @@ storeValue inst dst idata vdata = do
   isJust <$>  (exchangeMsg inst dst msg)
 
 
-iterativeStoreValue :: (Show i, Read i, Ord i,Enum i, Bits i, Random i, Show v) => Instance i v -> ID i -> v -> IO Bool
+iterativeStoreValue :: (Show i, Read i, Ord i,Integral i, Bits i, Random i, Show v) => Instance i v -> ID i -> v -> IO Bool
 iterativeStoreValue inst idata vdata = do
 
   nl <- iterativeFindNode inst idata
@@ -245,7 +245,7 @@ findValue inst dst idata = do
     Nothing                      -> return . Left $ []
 
 
-iterativeFindValue :: (Show i, Read i, Ord i, Enum i, Bits i, Random i, Show v, Read v) => Instance i v -> ID i -> IO (Maybe v)
+iterativeFindValue :: (Show i, Read i, Ord i, Integral i, Bits i, Random i, Show v, Read v) => Instance i v -> ID i -> IO (Maybe v)
 iterativeFindValue inst idata = do
 
   nl <- iterativeFindNode inst idata
@@ -257,7 +257,7 @@ iterativeFindValue inst idata = do
 
 
 
-refresh :: (Show i, Read i, Ord i,Enum i, Bits i ,Random i) => Instance i v -> IO ()
+refresh :: (Show i, Read i, Ord i,Integral i, Bits i ,Random i) => Instance i v -> IO ()
 refresh inst = do
   m <- STM.atomically $ STM.readTMVar $ _kbuckets inst
   let lkbi = fst $ M.findMin m
@@ -330,7 +330,7 @@ findNode inst (ID sid) i peer@(Peer pid ip p) = do
 
              return []
 
-iterativeFindNode :: (Show i , Read i, Ord i, Enum i, Bits i,Random i) => Instance i v -> ID i -> IO [Peer i]
+iterativeFindNode :: (Show i , Read i, Ord i, Integral i, Bits i,Random i) => Instance i v -> ID i -> IO [Peer i]
 iterativeFindNode inst i'@(ID i) = do
   when (debug) $ putStrLn "iterativeFindNode"
   sid'@(ID sid) <- newSession inst
@@ -440,7 +440,7 @@ updateSession inst sid'@(ID sid) i peers = do
 --sortPeersDist :: (ID i) -> [Peer i] -> [Peer i]
 sortPeersDist i =  sortBy ((comparing (distance i . _id)))
 
-closestContacts :: (Ord i,Enum i , Bits i) => Instance i v -> ID i -> IO [Peer i]
+closestContacts :: (Ord i,Integral i , Bits i) => Instance i v -> ID i -> IO [Peer i]
 closestContacts inst i = do
   kbm <- STM.atomically $ STM.readTMVar $ _kbuckets inst
   let myid = _id $ _self inst
@@ -459,7 +459,7 @@ closestContacts inst i = do
   --putStrLn $ "Closest: " ++ show closest
   return closest
 
-handle :: (Show i,Read i,Ord i,Enum i,Bits i,Random i,Show v,Read v) => Socket -> SockAddr -> C.ByteString -> Instance i v -> IO (Msg i)
+handle :: (Show i,Read i,Ord i,Integral i,Bits i,Random i,Show v,Read v) => Socket -> SockAddr -> C.ByteString -> Instance i v -> IO (Msg i)
 handle sock sa msgbs inst = do
   when (debug) $ putStrLn "handle"
   case (read $ C.unpack msgbs) of
@@ -467,7 +467,7 @@ handle sock sa msgbs inst = do
     (Msg FindClosestNodes sender sid dat) -> handleFindClosestNodes inst sender sid dat
     (Msg FindValue sender k _ ) -> handleFindValue inst sender k
     (Msg Store sender k bsv) -> handleStore inst sender k bsv
-    _ -> return $ Msg Error (_self inst) (ID (toEnum 1234)) ( C.pack "Error" )
+    _ -> return $ Msg Error (_self inst) (ID (1234)) ( C.pack "Error" )
 
 
 handleFindValue inst sender@(Peer i ip p) k = do
@@ -492,7 +492,7 @@ handleStore inst sender@(Peer i ip p) k bsv = do
   return $ Msg Ack (_self inst) k (C.pack  "Ok")
 
 
-handleFindClosestNodes :: (Show i,Read i,Ord i,Enum i,Bits i,Random i) => Instance i v -> Peer i -> MsgID i -> C.ByteString -> IO (Msg i)
+handleFindClosestNodes :: (Show i,Read i,Ord i,Integral i,Bits i,Random i) => Instance i v -> Peer i -> MsgID i -> C.ByteString -> IO (Msg i)
 handleFindClosestNodes inst sender@(Peer i ip p) epid dat = do
   when (debug) $ putStrLn "handleFindClosestNodes"
   updateKbucket inst sender
@@ -502,7 +502,7 @@ handleFindClosestNodes inst sender@(Peer i ip p) epid dat = do
 
 
 
-handlePing :: (Show i,Read i,Eq i,Ord i,Enum i,Bits i,Random i) => Instance i v -> Peer i -> MsgID i -> C.ByteString -> IO (Msg i)
+handlePing :: (Show i,Read i,Eq i,Ord i,Integral i,Bits i,Random i) => Instance i v -> Peer i -> MsgID i -> C.ByteString -> IO (Msg i)
 handlePing inst sender@(Peer i ip p) epid dat = do
   when (debug) $ putStrLn "handlePing"
   updateKbucket inst sender
@@ -528,7 +528,7 @@ dumpKbuckets inst = do
 
 
 
-updateKbucket :: (Show i,Read i,Eq i,Ord i,Enum i,Bits i,Random i) => Instance i v -> Peer i -> IO ()
+updateKbucket :: (Show i,Read i,Eq i,Ord i,Integral i,Bits i,Random i) => Instance i v -> Peer i -> IO ()
 updateKbucket inst sender@(Peer i ip p) = do
   when (debug) $ putStrLn "updateKbucket"
   -- Update kbucket if sender /= self
@@ -538,6 +538,7 @@ updateKbucket inst sender@(Peer i ip p) = do
 
   let myid = _id . _self $  inst
   let ind = index $ distance myid i
+  when debug $ putStrLn $ "D: " ++ (show $ index $ distance myid i)
 
   m <- STM.atomically $ STM.takeTMVar (_kbuckets inst)
   if M.member ind m
@@ -566,15 +567,23 @@ updateKbucket inst sender@(Peer i ip p) = do
        let m' = M.insert ind kbuck m
        STM.atomically $ STM.putTMVar (_kbuckets inst) m'
 
+decToBin x = reverse $ decToBin' x
+  where
+      decToBin' 0 = [0]
+      decToBin' y = let (a,b) = quotRem y 2 in b:(decToBin' a)
 
-index :: (Enum i) => ID i -> ID i
-index = toEnum . floor . logBase 2  . fromIntegral . fromEnum
 
-index2id :: (Enum i) => ID i -> IO (ID i)
+--index :: ID i -> ID i
+index'  (ID j) =  ID . length . decToBin  $ j
+
+index :: (Integral i) => ID i -> ID i
+index (ID i) =  floor . logBase 2  . fromIntegral $ i
+
+index2id :: (Show i,Integral i,Random i) => ID i -> IO (ID i)
 index2id i = do
-              let base = 2 ^ (fromEnum i)
-              let nbase = base * (fromEnum i)
-              (ID . toEnum) <$> randomRIO (base,nbase)
+              let base = 2 ^ (fromIntegral i)
+              let nbase = base * (fromIntegral i)
+              (ID) <$> randomRIO (base,nbase)
 
 distance :: (Bits i) => ID i -> ID i -> ID i
 distance = xor
