@@ -48,7 +48,7 @@ type IPv4 = HostAddress
 type Port = Word16
 
 newtype ID i = ID i
-  deriving (Show,Read,Num,Eq,Ord,Random,Bits,Enum)
+  deriving (Show,Read,Eq,Ord,Random,Bits,Enum)
 
 type SessionID i = ID i
 data SessionMode = ASEARCH | KSEARCH
@@ -112,7 +112,7 @@ newSession inst = do
   return (ID r)
 
 
---createInstance :: (Read i , Show i) => Peer -> IO (Instance i v)
+createInstance :: (Read i , Show i,Ord i,Enum i,Bits i,Random i,Show v,Read v) => Peer i -> IO (Instance i v)
 createInstance p@(Peer id ipv4 port) = do
   kbs <- STM.newTMVarIO M.empty
   ss  <- STM.newTMVarIO M.empty
@@ -408,7 +408,7 @@ closestContacts inst i = do
   --putStrLn $ "Closest: " ++ show closest
   return closest
 
---handle :: Socket -> SockAddr -> C.ByteString -> Instance i v -> IO (Msg)
+handle :: (Show i,Read i,Ord i,Enum i,Bits i,Random i,Show v,Read v) => Socket -> SockAddr -> C.ByteString -> Instance i v -> IO (Msg i)
 handle sock sa msgbs inst = do
   when (debug) $ putStrLn "handle"
   case (read $ C.unpack msgbs) of
@@ -416,10 +416,7 @@ handle sock sa msgbs inst = do
     (Msg FindClosestNodes sender sid dat) -> handleFindClosestNodes inst sender sid dat
     (Msg FindValue sender k _ ) -> handleFindValue inst sender k
     (Msg Store sender k bsv) -> handleStore inst sender k bsv
-    (Msg Ack sender sid dat) -> return $ Msg Pong (_self inst) 1234 (C.pack "blah")
-    (Msg NodeList sender sid dat) -> return $ Msg Pong (_self inst) 1234 (C.pack "blah")
-    (Msg Value sender sid dat) -> return $ Msg Pong (_self inst) 1234 (C.pack "blah")
-    _ -> return $ Msg Error (_self inst) 1234 ( C.pack "Error" )
+    _ -> return $ Msg Error (_self inst) (ID (toEnum 1234)) ( C.pack "Error" )
 
 
 handleFindValue inst sender@(Peer i ip p) k = do
