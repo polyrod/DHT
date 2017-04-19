@@ -8,6 +8,7 @@ module DHT
   -- * @DHT@ Datatypes
   ID(..)
   ,Peer(..)
+  ,Instance(..)
   -- * Creation
   ,new
   ,join
