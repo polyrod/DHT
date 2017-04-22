@@ -63,7 +63,7 @@ debug = False
 type IPv4 = HostAddress
 
 -- | typealias for Network.Socket.PortNum
-type Port = Word16
+type Port = PortNumber
 
 -- | The main identifier datatype used in implementation
 newtype ID i = ID i
